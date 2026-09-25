@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="45%" r="70%">
+      <stop offset="0" stop-color="#0b1a24"></stop>
+      <stop offset="1" stop-color="#000"></stop>
+    </radialGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="7" result="b"></feGaussianBlur>
+      <feMerge><feMergeNode in="b"></feMergeNode><feMergeNode in="b"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge>
+    </filter>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"></rect>
+  <!-- stars -->
+  <g fill="#fff" opacity="0.55">
+    <circle cx="70" cy="90" r="3"></circle><circle cx="430" cy="440" r="3"></circle>
+    <circle cx="455" cy="120" r="2.5"></circle><circle cx="110" cy="420" r="2.5"></circle>
+  </g>
+  <!-- big rock -->
+  <polygon points="382,46 422,58 452,48 472,88 458,126 468,160 432,182 398,168 362,178 340,142 352,112 346,72" fill="none" stroke="#fff" stroke-width="7" stroke-linejoin="round" filter="url(#glow)" opacity="0.9"></polygon>
+  <!-- snake body: S-curve -->
+  <g filter="url(#glow)" stroke="#00f0ff" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path id="body" d="M96 430 C 40 340, 150 300, 230 320 S 380 330, 360 240 S 250 170, 238 150" stroke-width="22"></path>
+    <g id="ticks" stroke-width="8"><line x1="99.2" y1="390.6" x2="63.5" y2="395.5"></line><line x1="106.0" y1="362.6" x2="77.5" y2="340.5"></line><line x1="133.9" y1="342.8" x2="120.2" y2="309.5"></line><line x1="171.4" y1="333.8" x2="167.9" y2="297.9"></line><line x1="210.9" y1="334.6" x2="216.2" y2="299.0"></line><line x1="253.8" y1="343.3" x2="259.5" y2="307.8"></line><line x1="301.7" y1="346.3" x2="299.3" y2="310.4"></line><line x1="352.6" y1="330.4" x2="331.5" y2="301.2"></line><line x1="380.8" y1="280.6" x2="345.0" y2="276.5"></line><line x1="376.2" y1="230.4" x2="341.4" y2="239.7"></line><line x1="352.7" y1="184.2" x2="325.6" y2="207.9"></line><line x1="309.8" y1="154.6" x2="296.7" y2="188.1"></line></g>
+  </g>
+  <!-- head: Asteroids ship pointing up-left toward the snack -->
+  <g transform="translate(232 140) rotate(-120)" filter="url(#glow)">
+    <polygon points="44,0 -26,-30 -12,0 -26,30" fill="#000" stroke="#fff" stroke-width="9" stroke-linejoin="round"></polygon>
+  </g>
+  <!-- green snack rock -->
+  <polygon points="146,62 168,48 184,64 200,70 194,98 170,108 158,96 138,94" fill="none" stroke="#00ff88" stroke-width="8" stroke-linejoin="round" filter="url(#glow)"></polygon>
+</svg>
