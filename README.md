@@ -1,6 +1,4 @@
-# Playground
-
-## Vector Viper
+# VectorViper
 
 Snake meets Asteroids. Open `vector-viper/index.html` in a browser — no build, no dependencies.
 
