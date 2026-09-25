@@ -1,3 +1,4 @@
+<meta charset="UTF-8">
 <title>Snakeroids</title>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <style>
@@ -382,9 +383,9 @@
     ctx.stroke();
     ctx.restore();
     const lbl = (s, x, on) => text(s, x, y, 14, on ? '#0ff' : 'rgba(255,255,255,0.3)');
-    lbl('◀ TURN', W / 6, z.includes('left'));
+    lbl('\u25c0 TURN', W / 6, z.includes('left'));
     lbl('FIRE', W / 2, z.includes('fire'));
-    lbl('TURN ▶', W * 5 / 6, z.includes('right'));
+    lbl('TURN \u25b6', W * 5 / 6, z.includes('right'));
   }
 
   function draw() {
@@ -423,7 +424,7 @@
       let y = mid + lines.length * lh + small;
       const help = isTouch
         ? ['Hold LEFT / RIGHT side: turn', 'Tap MIDDLE: fire (hold to autofire)', 'Hold BOTH sides: boost']
-        : ['← → turn   ↑ boost   SPACE fire   P pause'];
+        : ['\u2190 \u2192 turn   \u2191 boost   SPACE fire   P pause'];
       help.forEach((l, i) => text(l, W / 2, y + i * lh, small, '#aaa'));
       y += help.length * lh + small * 1.5;
       text(isTouch ? 'TAP TO START' : 'PRESS ENTER TO START', W / 2, y, small + 4, '#0f8');
