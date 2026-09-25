@@ -1,5 +1,5 @@
 <meta charset="UTF-8">
-<title>Snakeroids</title>
+<title>Vector Viper</title>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <style>
   :root { color-scheme: dark; }
@@ -415,7 +415,7 @@
     if (isTouch && state === 'play') drawZones();
     if (state === 'play' && waveTimer > 0) text('WAVE ' + wave, W / 2, mid - 60, 28);
     if (state === 'title') {
-      text('SNAKEROIDS', W / 2, mid - 60, Math.min(64, W / 9), '#0ff');
+      text('VECTOR VIPER', W / 2, mid - 60, Math.min(64, W / 9), '#0ff');
       const lh = small * 1.6;
       const lines = W < 600
         ? ['Eat small green rocks to grow.', 'Big rocks kill.', 'Shoot big rocks into snacks.']

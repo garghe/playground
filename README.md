@@ -1,8 +1,8 @@
 # Playground
 
-## Snakeroids
+## Vector Viper
 
-Snake meets Asteroids. Open `snakeroids/index.html` in a browser — no build, no dependencies.
+Snake meets Asteroids. Open `vector-viper/index.html` in a browser — no build, no dependencies.
 
 - ← → turn, ↑ boost, Space fire, P pause
 - On phones: hold left or right side of the screen to turn, tap the middle to fire (hold to autofire), hold both sides to boost
