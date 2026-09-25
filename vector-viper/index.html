@@ -381,19 +381,52 @@
 
   // faint guides for the three touch zones; the active zone lights up
   function drawZones() {
-    const y = H - SAFE_B - 24, z = [...touches.values()];
+    const z = [...touches.values()];
+    const L = z.includes('left'), R = z.includes('right'), boost = L && R;
+    // dividers between the three zones
     ctx.save();
     ctx.shadowBlur = 0; ctx.lineWidth = 1; ctx.setLineDash([4, 8]);
-    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    ctx.strokeStyle = 'rgba(0,255,255,0.18)';
     ctx.beginPath();
-    ctx.moveTo(W / 3, SAFE_T + 60); ctx.lineTo(W / 3, H - SAFE_B);
-    ctx.moveTo(W * 2 / 3, SAFE_T + 60); ctx.lineTo(W * 2 / 3, H - SAFE_B);
+    ctx.moveTo(W / 3, SAFE_T + 60); ctx.lineTo(W / 3, H - SAFE_B - 90);
+    ctx.moveTo(W * 2 / 3, SAFE_T + 60); ctx.lineTo(W * 2 / 3, H - SAFE_B - 90);
     ctx.stroke();
     ctx.restore();
-    const lbl = (s, x, on) => text(s, x, y, 14, on ? '#0ff' : 'rgba(255,255,255,0.3)');
-    lbl('\u25c0 TURN', W / 6, z.includes('left'));
-    lbl('FIRE', W / 2, z.includes('fire'));
-    lbl('TURN \u25b6', W * 5 / 6, z.includes('right'));
+    // three control pads along the bottom edge
+    const gap = 10, pw = (W - gap * 4) / 3, ph = 72, py = H - SAFE_B - ph - 12;
+    const pads = [
+      { k: 'left', on: L, label: boost ? 'BOOST' : 'TURN', icon: 'left' },
+      { k: 'fire', on: z.includes('fire'), label: 'FIRE', icon: 'fire' },
+      { k: 'right', on: R, label: boost ? 'BOOST' : 'TURN', icon: 'right' },
+    ];
+    pads.forEach((pd, i) => {
+      const px = gap + i * (pw + gap), cx = px + pw / 2, cy = py + ph / 2 - 8;
+      const col = pd.k === 'fire' ? '255,120,0' : '0,255,255';
+      ctx.save();
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(px, py, pw, ph, 14); else ctx.rect(px, py, pw, ph);
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = `rgba(${col},${pd.on ? 0.35 : 0.1})`;
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = `rgba(${col},${pd.on ? 1 : 0.6})`;
+      ctx.shadowColor = `rgb(${col})`; ctx.shadowBlur = pd.on ? 16 : 6;
+      ctx.stroke();
+      // icon
+      ctx.fillStyle = ctx.strokeStyle = pd.on ? '#fff' : `rgb(${col})`;
+      ctx.beginPath();
+      if (pd.icon === 'left') { ctx.moveTo(cx - 12, cy); ctx.lineTo(cx + 8, cy - 11); ctx.lineTo(cx + 8, cy + 11); ctx.closePath(); ctx.fill(); }
+      else if (pd.icon === 'right') { ctx.moveTo(cx + 12, cy); ctx.lineTo(cx - 8, cy - 11); ctx.lineTo(cx - 8, cy + 11); ctx.closePath(); ctx.fill(); }
+      else {
+        ctx.arc(cx, cy, 10, 0, Math.PI * 2);
+        ctx.moveTo(cx - 16, cy); ctx.lineTo(cx - 6, cy); ctx.moveTo(cx + 6, cy); ctx.lineTo(cx + 16, cy);
+        ctx.moveTo(cx, cy - 16); ctx.lineTo(cx, cy - 6); ctx.moveTo(cx, cy + 6); ctx.lineTo(cx, cy + 16);
+        ctx.stroke();
+        ctx.beginPath(); ctx.arc(cx, cy, 3, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.restore();
+      text(pd.label, cx, py + ph - 10, 13, pd.on ? '#fff' : `rgba(${col},0.9)`);
+    });
   }
 
   function draw() {
