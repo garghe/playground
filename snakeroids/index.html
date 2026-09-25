@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Snakeroids</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; touch-action: none; }
+  canvas { display: block; }
+  #touch { position: fixed; bottom: 16px; left: 0; right: 0; display: none; justify-content: space-between; padding: 0 16px; pointer-events: none; }
+  #touch div { display: flex; gap: 12px; }
+  #touch button {
+    pointer-events: auto; width: 64px; height: 64px; border-radius: 50%;
+    background: transparent; border: 2px solid #fff6; color: #fff; font: 20px monospace;
+    -webkit-user-select: none; user-select: none;
+  }
+  @media (pointer: coarse) { #touch { display: flex; } }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="touch">
+  <div><button data-k="left">◀</button><button data-k="right">▶</button></div>
+  <div><button data-k="fire">●</button><button data-k="thrust">▲</button></div>
+</div>
+<script>
+(() => {
+  const cv = document.getElementById('c');
+  const ctx = cv.getContext('2d');
+  let W, H, dpr;
+  function resize() {
+    dpr = window.devicePixelRatio || 1;
+    W = window.innerWidth; H = window.innerHeight;
+    cv.width = W * dpr; cv.height = H * dpr;
+    cv.style.width = W + 'px'; cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // ---------- Tuning ----------
+  const TURN = 4.2;          // rad/s
+  const SPEED = 150;         // px/s
+  const BOOST = 270;         // px/s while thrusting
+  const START_LEN = 60;      // px of body
+  const GROW = 22;           // px gained per rock eaten
+  const BULLET_SPEED = 480;
+  const BULLET_LIFE = 0.9;
+  const MAX_BULLETS = 4;
+  const ROCK_R = [0, 12, 26, 44]; // radius by size (1 = edible)
+
+  // ---------- Input ----------
+  const keys = { left: false, right: false, thrust: false, fire: false };
+  const keyMap = {
+    ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
+    ArrowUp: 'thrust', KeyW: 'thrust', Space: 'fire'
+  };
+  let firePressed = false;
+  addEventListener('keydown', e => {
+    const k = keyMap[e.code];
+    if (k) { e.preventDefault(); if (k === 'fire' && !keys.fire) firePressed = true; keys[k] = true; }
+    if ((e.code === 'Enter' || e.code === 'Space') && state !== 'play') startGame();
+    if (e.code === 'KeyP' && (state === 'play' || state === 'pause')) state = state === 'play' ? 'pause' : 'play';
+  });
+  addEventListener('keyup', e => { const k = keyMap[e.code]; if (k) keys[k] = false; });
+  document.querySelectorAll('#touch button').forEach(b => {
+    const k = b.dataset.k;
+    b.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      if (state !== 'play') { startGame(); return; }
+      if (k === 'fire') firePressed = true;
+      keys[k] = true;
+    });
+    const up = () => keys[k] = false;
+    b.addEventListener('pointerup', up); b.addEventListener('pointerleave', up); b.addEventListener('pointercancel', up);
+  });
+  cv.addEventListener('pointerdown', () => { if (state !== 'play') startGame(); });
+
+  // ---------- Sound ----------
+  let ac;
+  function beep(freq, dur, type = 'square', vol = 0.06, slide = 0) {
+    try {
+      ac = ac || new (window.AudioContext || window.webkitAudioContext)();
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.type = type; o.frequency.value = freq;
+      if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(20, freq + slide), ac.currentTime + dur);
+      g.gain.setValueAtTime(vol, ac.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + dur);
+      o.connect(g).connect(ac.destination);
+      o.start(); o.stop(ac.currentTime + dur);
+    } catch (_) {}
+  }
+  function noise(dur, vol = 0.15) {
+    try {
+      ac = ac || new (window.AudioContext || window.webkitAudioContext)();
+      const buf = ac.createBuffer(1, ac.sampleRate * dur, ac.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
+      const s = ac.createBufferSource(), g = ac.createGain();
+      g.gain.value = vol; s.buffer = buf; s.connect(g).connect(ac.destination); s.start();
+    } catch (_) {}
+  }
+
+  // ---------- Helpers ----------
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const wrap = o => {
+    if (o.x < 0) o.x += W; else if (o.x >= W) o.x -= W;
+    if (o.y < 0) o.y += H; else if (o.y >= H) o.y -= H;
+  };
+  // shortest delta on a torus
+  const wd = (a, b, size) => { let d = b - a; if (d > size / 2) d -= size; else if (d < -size / 2) d += size; return d; };
+  const tdist = (a, b) => Math.hypot(wd(a.x, b.x, W), wd(a.y, b.y, H));
+  let hiScore = 0;
+  try { hiScore = +localStorage.getItem('snakeroids-hi') || 0; } catch (_) {}
+
+  // ---------- Game state ----------
+  let state = 'title'; // title | play | pause | over
+  let snake, rocks, bullets, particles, score, wave, waveTimer;
+
+  function makeRock(size, x, y) {
+    const r = ROCK_R[size];
+    const n = 9 + Math.floor(Math.random() * 4);
+    const shape = [];
+    for (let i = 0; i < n; i++) shape.push(r * rand(0.7, 1.15));
+    const sp = rand(20, 50) * (4 - size) * 0.8 + wave * 4;
+    const a = rand(0, Math.PI * 2);
+    return { x, y, size, r, shape, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, rot: 0, vr: rand(-1, 1) };
+  }
+
+  function spawnWave() {
+    wave++;
+    const n = 2 + wave;
+    for (let i = 0; i < n; i++) {
+      let x, y;
+      do { x = rand(0, W); y = rand(0, H); } while (Math.hypot(x - snake.x, y - snake.y) < 200);
+      rocks.push(makeRock(3, x, y));
+    }
+    // a few free snacks to start the wave
+    for (let i = 0; i < 2; i++) rocks.push(makeRock(1, rand(0, W), rand(0, H)));
+    waveTimer = 2;
+  }
+
+  function startGame() {
+    snake = { x: W / 2, y: H / 2, a: -Math.PI / 2, len: START_LEN, trail: [], cooldown: 0 };
+    rocks = []; bullets = []; particles = [];
+    score = 0; wave = 0;
+    spawnWave();
+    state = 'play';
+    beep(440, 0.1); setTimeout(() => beep(660, 0.12), 100);
+  }
+
+  function explode(x, y, n, color = '#fff', spd = 120) {
+    for (let i = 0; i < n; i++) {
+      const a = rand(0, Math.PI * 2), s = rand(20, spd);
+      particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: rand(0.4, 1), max: 1, color });
+    }
+  }
+
+  function splitRock(i) {
+    const r = rocks[i];
+    rocks.splice(i, 1);
+    explode(r.x, r.y, 6 + r.size * 5);
+    noise(0.1 + r.size * 0.1, 0.05 + r.size * 0.04);
+    if (r.size > 1) {
+      rocks.push(makeRock(r.size - 1, r.x, r.y));
+      rocks.push(makeRock(r.size - 1, r.x, r.y));
+    }
+    score += [0, 10, 20, 50][r.size];
+  }
+
+  function die() {
+    state = 'over';
+    for (const p of snake.trail) if (Math.random() < 0.3) explode(p.x, p.y, 2, '#0ff', 80);
+    explode(snake.x, snake.y, 40, '#0ff', 200);
+    noise(0.8, 0.25);
+    if (score > hiScore) { hiScore = score; try { localStorage.setItem('snakeroids-hi', hiScore); } catch (_) {} }
+  }
+
+  // ---------- Update ----------
+  function update(dt) {
+    // particles always animate
+    for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; wrap(p); }
+    particles = particles.filter(p => p.life > 0);
+    if (state === 'title' || state === 'over') {
+      if (rocks) for (const r of rocks) { r.x += r.vx * dt; r.y += r.vy * dt; r.rot += r.vr * dt; wrap(r); }
+      return;
+    }
+    if (state !== 'play') return;
+
+    const s = snake;
+    if (keys.left) s.a -= TURN * dt;
+    if (keys.right) s.a += TURN * dt;
+    const sp = keys.thrust ? BOOST : SPEED;
+    s.x += Math.cos(s.a) * sp * dt;
+    s.y += Math.sin(s.a) * sp * dt;
+    wrap(s);
+    if (keys.thrust && Math.random() < 0.5) {
+      particles.push({ x: s.x - Math.cos(s.a) * 8, y: s.y - Math.sin(s.a) * 8,
+        vx: -Math.cos(s.a + rand(-0.4, 0.4)) * 80, vy: -Math.sin(s.a + rand(-0.4, 0.4)) * 80,
+        life: 0.25, max: 0.25, color: '#f80' });
+    }
+
+    // trail: newest first, trimmed to snake length
+    s.trail.unshift({ x: s.x, y: s.y });
+    let acc = 0;
+    for (let i = 1; i < s.trail.length; i++) {
+      acc += tdist(s.trail[i - 1], s.trail[i]);
+      if (acc > s.len) { s.trail.length = i + 1; break; }
+    }
+
+    // shooting
+    s.cooldown -= dt;
+    if (firePressed && s.cooldown <= 0 && bullets.length < MAX_BULLETS) {
+      bullets.push({ x: s.x + Math.cos(s.a) * 10, y: s.y + Math.sin(s.a) * 10,
+        vx: Math.cos(s.a) * BULLET_SPEED, vy: Math.sin(s.a) * BULLET_SPEED, life: BULLET_LIFE });
+      s.cooldown = 0.15;
+      beep(900, 0.08, 'square', 0.04, -600);
+    }
+    firePressed = false;
+
+    for (const b of bullets) { b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt; wrap(b); }
+    bullets = bullets.filter(b => b.life > 0);
+
+    for (const r of rocks) { r.x += r.vx * dt; r.y += r.vy * dt; r.rot += r.vr * dt; wrap(r); }
+
+    // bullet vs rock
+    for (let bi = bullets.length - 1; bi >= 0; bi--) {
+      for (let ri = rocks.length - 1; ri >= 0; ri--) {
+        if (tdist(bullets[bi], rocks[ri]) < rocks[ri].r) { bullets.splice(bi, 1); splitRock(ri); break; }
+      }
+    }
+
+    // head vs rock
+    for (let ri = rocks.length - 1; ri >= 0; ri--) {
+      const r = rocks[ri];
+      if (tdist(s, r) < r.r + 6) {
+        if (r.size === 1) {
+          rocks.splice(ri, 1);
+          s.len += GROW;
+          score += 25;
+          explode(r.x, r.y, 10, '#0f8', 90);
+          beep(520, 0.06, 'triangle', 0.08); setTimeout(() => beep(780, 0.08, 'triangle', 0.08), 60);
+        } else { die(); return; }
+      }
+    }
+
+    // body vs big rocks: rocks chop off the tail past the impact point
+    acc = 0;
+    for (let i = 1; i < s.trail.length; i++) {
+      acc += tdist(s.trail[i - 1], s.trail[i]);
+      if (acc < START_LEN) continue; // the first stretch of body can't be chopped
+      const hit = rocks.find(r => r.size > 1 && tdist(s.trail[i], r) < r.r);
+      if (hit) {
+        const lost = s.len - acc;
+        if (lost > 5) {
+          for (let j = i; j < s.trail.length; j += 3) explode(s.trail[j].x, s.trail[j].y, 2, '#0ff', 60);
+          s.len = acc;
+          s.trail.length = i;
+          noise(0.2, 0.08);
+        }
+        break;
+      }
+    }
+
+    // head vs own body
+    acc = 0;
+    for (let i = 1; i < s.trail.length; i++) {
+      acc += tdist(s.trail[i - 1], s.trail[i]);
+      if (acc > 40 && tdist(s, s.trail[i]) < 5) { die(); return; }
+    }
+
+    if (rocks.length === 0) spawnWave();
+    if (waveTimer > 0) waveTimer -= dt;
+  }
+
+  // ---------- Draw ----------
+  function glow(color, blur = 8) { ctx.strokeStyle = color; ctx.fillStyle = color; ctx.shadowColor = color; ctx.shadowBlur = blur; }
+
+  // draw at the object's position and at wrapped copies when near an edge
+  function drawWrapped(x, y, r, fn) {
+    const xs = [x], ys = [y];
+    if (x < r) xs.push(x + W); if (x > W - r) xs.push(x - W);
+    if (y < r) ys.push(y + H); if (y > H - r) ys.push(y - H);
+    for (const px of xs) for (const py of ys) fn(px, py);
+  }
+
+  function drawRock(r) {
+    glow(r.size === 1 ? '#0f8' : '#fff', r.size === 1 ? 12 : 6);
+    ctx.lineWidth = 1.5;
+    drawWrapped(r.x, r.y, r.r * 1.2, (x, y) => {
+      ctx.beginPath();
+      const n = r.shape.length;
+      for (let i = 0; i < n; i++) {
+        const a = r.rot + (i / n) * Math.PI * 2;
+        const px = x + Math.cos(a) * r.shape[i], py = y + Math.sin(a) * r.shape[i];
+        i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+      }
+      ctx.closePath(); ctx.stroke();
+    });
+  }
+
+  function drawSnake() {
+    const s = snake, t = s.trail;
+    glow('#0ff', 10);
+    ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    for (let i = 0; i < t.length; i++) {
+      if (i === 0 || Math.abs(t[i].x - t[i - 1].x) > W / 2 || Math.abs(t[i].y - t[i - 1].y) > H / 2) ctx.moveTo(t[i].x, t[i].y);
+      else ctx.lineTo(t[i].x, t[i].y);
+    }
+    ctx.stroke();
+    // segment ticks along the body for that vector-ring look
+    ctx.lineWidth = 1.5;
+    let acc = 0, next = 14;
+    for (let i = 1; i < t.length; i++) {
+      acc += tdist(t[i - 1], t[i]);
+      if (acc >= next) {
+        next += 14;
+        const dx = wd(t[i].x, t[i - 1].x, W), dy = wd(t[i].y, t[i - 1].y, H);
+        const a = Math.atan2(dy, dx) + Math.PI / 2;
+        ctx.beginPath();
+        ctx.moveTo(t[i].x + Math.cos(a) * 6, t[i].y + Math.sin(a) * 6);
+        ctx.lineTo(t[i].x - Math.cos(a) * 6, t[i].y - Math.sin(a) * 6);
+        ctx.stroke();
+      }
+    }
+    // head: classic Asteroids ship
+    glow('#fff', 12);
+    ctx.lineWidth = 2;
+    drawWrapped(s.x, s.y, 14, (x, y) => {
+      ctx.save(); ctx.translate(x, y); ctx.rotate(s.a);
+      ctx.beginPath();
+      ctx.moveTo(12, 0); ctx.lineTo(-8, -8); ctx.lineTo(-4, 0); ctx.lineTo(-8, 8); ctx.closePath();
+      ctx.stroke();
+      if (keys.thrust && Math.random() < 0.7) {
+        glow('#f80', 12);
+        ctx.beginPath(); ctx.moveTo(-5, -4); ctx.lineTo(-14 - Math.random() * 6, 0); ctx.lineTo(-5, 4); ctx.stroke();
+      }
+      ctx.restore();
+    });
+  }
+
+  function text(str, x, y, size, color = '#fff', align = 'center') {
+    ctx.font = `${size}px "Courier New", monospace`;
+    ctx.textAlign = align; glow(color, 10);
+    ctx.fillText(str, x, y);
+  }
+
+  function draw() {
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(0,0,0,0.45)'; // slight trails = CRT phosphor
+    ctx.fillRect(0, 0, W, H);
+
+    if (rocks) rocks.forEach(drawRock);
+    if (state === 'play' || state === 'pause') {
+      glow('#fff', 8);
+      for (const b of bullets) { ctx.beginPath(); ctx.arc(b.x, b.y, 2, 0, Math.PI * 2); ctx.fill(); }
+      drawSnake();
+    }
+    for (const p of particles) {
+      glow(p.color, 6);
+      ctx.globalAlpha = Math.max(0, p.life / p.max);
+      ctx.fillRect(p.x - 1, p.y - 1, 2, 2);
+    }
+    ctx.globalAlpha = 1;
+
+    const mid = H / 2, small = Math.min(18, W / 30);
+    if (state !== 'title') {
+      text(String(score).padStart(5, '0'), 20, 36, 24, '#fff', 'left');
+      text('HI ' + String(hiScore).padStart(5, '0'), W / 2, 36, 16, '#aaa');
+      text('WAVE ' + wave, W - 20, 36, 16, '#aaa', 'right');
+    }
+    if (state === 'play' && waveTimer > 0) text('WAVE ' + wave, W / 2, mid - 60, 28);
+    if (state === 'title') {
+      text('SNAKEROIDS', W / 2, mid - 60, Math.min(64, W / 9), '#0ff');
+      text('Eat the small green rocks to grow. Big rocks kill.', W / 2, mid, small);
+      text('Shoot big rocks to break them into snacks.', W / 2, mid + 28, small);
+      text('← → turn   ↑ boost   SPACE fire   P pause', W / 2, mid + 70, small, '#aaa');
+      text('PRESS ENTER OR TAP TO START', W / 2, mid + 130, small + 4, '#0f8');
+      if (hiScore) text('HI ' + hiScore, W / 2, mid + 170, small, '#aaa');
+    }
+    if (state === 'pause') text('PAUSED', W / 2, mid, 40);
+    if (state === 'over') {
+      text('GAME OVER', W / 2, mid - 30, Math.min(56, W / 10), '#f44');
+      text('SCORE ' + score + (score >= hiScore && score > 0 ? '  NEW HIGH!' : ''), W / 2, mid + 20, small + 4);
+      text('PRESS ENTER OR TAP TO PLAY AGAIN', W / 2, mid + 70, small, '#0f8');
+    }
+  }
+
+  // title screen backdrop
+  wave = 1; snake = { x: -999, y: -999 };
+  rocks = Array.from({ length: 6 }, (_, i) => makeRock(1 + (i % 3), rand(0, W), rand(0, H)));
+  bullets = []; particles = [];
+
+  let last = performance.now();
+  function loop(now) {
+    const dt = Math.min(0.033, (now - last) / 1000);
+    last = now;
+    update(dt);
+    draw();
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
